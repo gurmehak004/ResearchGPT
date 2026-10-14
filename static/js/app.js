@@ -43,21 +43,21 @@ function updateDocPanel(data) {
       return `
         <div class="file-row">
           <span class="file-title" title="${file}">${escapeHtml(file)}</span>
-          <span class="chunk-tag">${chunks} chunks</span>
+          <span class="chunk-tag">${chunks} sections</span>
         </div>
       `;
     }).join("");
 
     chatInput.disabled = false;
     sendBtn.disabled = false;
-    headerStatus.textContent = `Index active with ${files.length} document(s). Ready for queries.`;
+    headerStatus.textContent = `${files.length} paper(s) loaded. Ask your first question below.`;
     systemStatusIndicator.classList.add("active");
-    systemStatusText.textContent = "Active";
+    systemStatusText.textContent = "Ready";
   } else {
-    fileList.innerHTML = `<div class="empty-state">No active documents. Ingest PDFs to enable queries.</div>`;
+    fileList.innerHTML = `<div class="empty-state">No papers loaded yet. Upload PDFs above to begin.</div>`;
     chatInput.disabled = true;
     sendBtn.disabled = true;
-    headerStatus.textContent = "System idle. Awaiting document ingestion.";
+    headerStatus.textContent = "Upload papers on the left to get started.";
     systemStatusIndicator.classList.remove("active");
     systemStatusText.textContent = "Idle";
   }
@@ -156,7 +156,7 @@ resetBtn.addEventListener("click", async () => {
     try {
       await fetch("/api/reset", { method: "POST" });
       fetchStatus();
-      appendMessage("assistant", "Corpus index has been reset. Ingest new PDFs to continue.");
+      appendMessage("assistant", "All papers have been cleared. Upload new PDFs to continue.");
     } catch (e) {
       console.error(e);
     }
@@ -181,7 +181,7 @@ chatForm.addEventListener("submit", async (e) => {
   chatInput.style.height = "auto";
 
   const loadingId = appendLoadingMessage();
-  systemStatusText.textContent = "Inferencing...";
+  systemStatusText.textContent = "Thinking...";
 
   try {
     const res = await fetch("/api/chat", {
@@ -215,7 +215,7 @@ chatForm.addEventListener("submit", async (e) => {
     removeLoadingMessage(loadingId);
     appendMessage("assistant", `Network error: ${err.message}`);
   } finally {
-    systemStatusText.textContent = "Active";
+    systemStatusText.textContent = "Ready";
   }
 });
 
@@ -287,9 +287,9 @@ function appendLoadingMessage() {
   msgDiv.id = id;
   msgDiv.className = "message assistant";
   msgDiv.innerHTML = `
-    <div class="message-tag">PROCESSING</div>
+    <div class="message-tag">THINKING</div>
     <div class="message-content">
-      <em>Retrieving candidate passages and generating synthesized response...</em>
+      <em>Reading your papers and generating a cited answer&hellip;</em>
     </div>
   `;
   chatMessages.appendChild(msgDiv);

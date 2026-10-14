@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ResearchGPT — Document Intelligence System</title>
+  <title>ResearchGPT &mdash; Research Workspace</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -17,18 +17,18 @@
     <aside class="sidebar">
       <div class="sidebar-header">
         <div class="brand">
-          <div class="brand-badge">SYS</div>
+          <div class="brand-badge">DOCS</div>
           <div class="brand-text">
             <h1>ResearchGPT</h1>
-            <span class="sub-label">Hybrid RAG Engine</span>
+            <span class="sub-label">Academic Assistant</span>
           </div>
         </div>
       </div>
 
       <!-- Upload Section -->
       <div class="panel-section">
-        <div class="section-heading">Document Ingestion</div>
-        <div class="section-desc">Upload PDF files to initialize retrieval index.</div>
+        <div class="section-heading">Upload Papers</div>
+        <div class="section-desc">Add your PDF research papers to start asking questions.</div>
         
         <div class="upload-dropzone" id="dropzone">
           <input type="file" id="file-input" multiple accept=".pdf" hidden>
@@ -49,16 +49,16 @@
       <!-- Loaded Papers & Stats -->
       <div class="panel-section flex-grow">
         <div class="panel-header-row">
-          <div class="section-heading">Active Corpus (<span id="doc-count">0</span>)</div>
-          <button id="reset-btn" class="btn-action-text" title="Clear documents">Clear Index</button>
+          <div class="section-heading">Loaded Papers (<span id="doc-count">0</span>)</div>
+          <button id="reset-btn" class="btn-action-text" title="Clear documents">Clear All</button>
         </div>
         <div id="file-list" class="file-list">
-          <div class="empty-state">No active documents. Ingest PDFs to enable queries.</div>
+          <div class="empty-state">No papers loaded yet. Upload PDFs above to begin.</div>
         </div>
 
         <div class="metrics-panel">
           <div class="metric-block">
-            <span class="metric-label">Total Indexed Chunks</span>
+            <span class="metric-label">Analyzed Sections</span>
             <span class="metric-value" id="total-chunks-stat">0</span>
           </div>
         </div>
@@ -69,8 +69,8 @@
     <main class="chat-workspace">
       <header class="workspace-header">
         <div class="header-titles">
-          <h2>Query Console</h2>
-          <span id="header-status" class="header-sub">System idle. Awaiting document ingestion.</span>
+          <h2>Research Assistant</h2>
+          <span id="header-status" class="header-sub">Upload papers on the left to get started.</span>
         </div>
         <div class="header-status-badge">
           <span class="status-dot" id="system-status-indicator"></span>
@@ -81,16 +81,16 @@
       <!-- Message Stream -->
       <div class="chat-messages" id="chat-messages">
         <div class="message assistant intro-card">
-          <div class="message-tag">SYSTEM</div>
+          <div class="message-tag">WELCOME</div>
           <div class="message-content">
-            <h3>ResearchGPT Query Console</h3>
-            <p>This environment is configured for grounded academic document synthesis and multi-paper comparative analysis:</p>
+            <h3>Welcome to ResearchGPT</h3>
+            <p>Upload your research papers on the left and start asking questions. Here's what you can do:</p>
             <ul>
-              <li><strong>Dual Retrieval Architecture:</strong> Dense FAISS vector embeddings paired with sparse BM25 keyword matching.</li>
-              <li><strong>Multi-Document Grounding:</strong> Cross-references and attributes conclusions to their explicit source papers.</li>
-              <li><strong>Hallucination Verification:</strong> Secondary factual consistency pass to suppress unsupported assertions.</li>
+              <li><strong>Get cited answers:</strong> Every response traces directly back to the exact paper and section it came from.</li>
+              <li><strong>Compare papers:</strong> Ask questions across multiple uploaded papers to compare findings, methods, and results.</li>
+              <li><strong>Stay accurate:</strong> Answers are grounded strictly in your documents &mdash; no invented information.</li>
             </ul>
-            <p>Upload target PDFs using the ingestion panel to activate the retrieval index.</p>
+            <p>Try uploading a paper and asking: <em>"What is this paper about?"</em> or <em>"What are the key findings?"</em></p>
           </div>
         </div>
       </div>
@@ -100,7 +100,7 @@
         <form id="chat-form" class="chat-form">
           <textarea 
             id="chat-input" 
-            placeholder="Submit a research query or comparative analysis prompt..."
+            placeholder="Ask a question about your uploaded papers..."
             rows="1"
             disabled
           ></textarea>
@@ -111,7 +111,7 @@
             </svg>
           </button>
         </form>
-        <div class="input-annotation">Shift + Enter for multiline | Enter to execute query</div>
+        <div class="input-annotation">Shift + Enter for new line &nbsp;|&nbsp; Enter to send</div>
       </div>
     </main>
   </div>
