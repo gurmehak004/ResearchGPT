@@ -1,5 +1,22 @@
-venv/
+# Python artifacts
 __pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+venv/
 .env
-*.pyc
+
+# Session, upload & database artifacts
+.uploads/
+.cache/
+.files/
+.chainlit/
+data/
+*.db
+*.sqlite3
+
+# OS / Editor artifacts
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/

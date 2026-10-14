@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ResearchGPT — Grounded Literature Synthesis & Comparative Analysis</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/landing.css') }}">
+</head>
+<body>
+  <div class="landing-page">
+    <!-- Navbar -->
+    <header class="navbar">
+      <div class="nav-brand">
+        <span class="nav-badge">DOCS</span>
+        <span class="nav-title">ResearchGPT</span>
+      </div>
+      <nav class="nav-links">
+        <a href="#motive">Core Motive</a>
+        <a href="#capabilities">Capabilities</a>
+        <a href="#workflow">Ingestion Pipeline</a>
+        <a href="#assurance">Trust & Precision</a>
+        <a href="/workspace" class="btn-launch">Access Workspace</a>
+      </nav>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero-section">
+      <div class="hero-tag">ACADEMIC LITERATURE INTELLIGENCE</div>
+      <h1 class="hero-heading">Accelerating Peer-Reviewed Literature Synthesis</h1>
+      <p class="hero-subtext">
+        Eliminate the bottleneck of manual paper traversal. ResearchGPT ingests complex academic manuscripts, 
+        structures numerical benchmark tables, and executes rigorous cross-paper comparative audits with 
+        verifiable, source-attributed citations.
+      </p>
+      <div class="hero-cta-group">
+        <a href="/workspace" class="btn-primary-cta">Launch Research Workspace &rarr;</a>
+        <a href="#motive" class="btn-secondary-cta">Read Core Motive</a>
+      </div>
+    </section>
+
+    <!-- Operational Highlights Banner -->
+    <section class="stats-banner">
+      <div class="stat-cell">
+        <span class="stat-number">Sub-Second</span>
+        <span class="stat-label">Inference & Reranked Retrieval</span>
+      </div>
+      <div class="stat-cell">
+        <span class="stat-number">Zero Guesswork</span>
+        <span class="stat-label">Strict Context-Bound Attribution</span>
+      </div>
+      <div class="stat-cell">
+        <span class="stat-number">Corpus-Scale</span>
+        <span class="stat-label">Multi-Document Comparative Synthesis</span>
+      </div>
+    </section>
+
+    <!-- Section 1: Core Motive -->
+    <section class="features-section" id="motive">
+      <div class="section-label">Foundational Motive</div>
+      <h2 class="section-title">Bridging the Gap in Scholarly Comprehension</h2>
+      
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="feature-number">01</div>
+          <h3>The Literature Velocity Crisis</h3>
+          <p>
+            With thousands of preprints published weekly, scholars spend up to 70% of their research cycle 
+            merely locating relevant ablation tables and architectural configurations rather than conducting novel inquiry.
+          </p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-number">02</div>
+          <h3>The Unreliability of Generative AI</h3>
+          <p>
+            Standard language models routinely hallucinate non-existent authors, skew statistical findings, and blend disparate studies. 
+            Academic workflows demand deterministic grounding where every statement is traceable to an exact paragraph.
+          </p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-number">03</div>
+          <h3>Isolated Context Silos</h3>
+          <p>
+            Conventional readers restrict analysis to a single document view. ResearchGPT eliminates context fragmentation, 
+            allowing researchers to query entire thematic paper clusters as a unified, interactive knowledge corpus.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 2: Technical Capabilities & Value Proposition -->
+    <section class="features-section" id="capabilities">
+      <div class="section-label">Capabilities & Value Proposition</div>
+      <h2 class="section-title">Engineered for Methodological Rigor</h2>
+      
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="feature-number">&bull;</div>
+          <h3>Structured Table & Benchmark Extraction</h3>
+          <p>
+            Parses dense experimental grids and baseline evaluation matrices directly into structured representations, 
+            enabling precise numerical cross-comparisons.
+          </p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-number">&bull;</div>
+          <h3>Abstract & Key Premise Pinning</h3>
+          <p>
+            Automatically anchors high-salience introductory declarations and abstract summaries, guaranteeing high recall 
+            for both macro-level overviews and micro-level methodological inquiries.
+          </p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-number">&bull;</div>
+          <h3>Persistent Session Memory</h3>
+          <p>
+            Session indices persist locally across reboots and network reconnects, preserving your analyzed literature clusters 
+            without requiring repeated document re-uploading.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 3: Ingestion Pipeline & Execution Flow -->
+    <section class="workflow-section" id="workflow">
+      <div class="section-label">System Architecture</div>
+      <h2 class="section-title">The Three-Phase Synthesis Pipeline</h2>
+
+      <div class="steps-row">
+        <div class="step-box">
+          <div class="step-num">PHASE 01</div>
+          <h4>Structural Ingestion</h4>
+          <p>Multi-page manuscripts are parsed at high throughput, isolating text streams, figures, and benchmark tables.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step-box">
+          <div class="step-num">PHASE 02</div>
+          <h4>Two-Stage Retrieval & Reranking</h4>
+          <p>Broad lexical and semantic candidates are extracted, then reranked via cross-encoder scoring for maximum precision.</p>
+        </div>
+        <div class="step-arrow">&rarr;</div>
+        <div class="step-box">
+          <div class="step-num">PHASE 03</div>
+          <h4>Grounded Attribution</h4>
+          <p>The synthesis engine formulates cited responses, backed by real-time confidence metrics and collapsible source inspection drawers.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 4: Trust, Precision & Governance (New Section) -->
+    <section class="features-section" id="assurance">
+      <div class="section-label">Verification & Guardrails</div>
+      <h2 class="section-title">Academic Assurance & Integrity Protocols</h2>
+      
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="feature-number">🛡️</div>
+          <h3>Dual-Pass Hallucination Suppression</h3>
+          <p>
+            Outputs that fail internal factual consistency checks are automatically suppressed, safeguarding literature reviews against unverified claims.
+          </p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-number">🔍</div>
+          <h3>Granular Source Auditing</h3>
+          <p>
+            Inspect the exact text chunks, page offsets, and context windows utilized by the model for every generated deduction.
+          </p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-number">⚡</div>
+          <h3>Resource Rate Governance</h3>
+          <p>
+            Integrated request throttles and compute guards prevent API starvation and protect against automated query exhaustion.
+          </p>
+        </div>
+      </div>
+
+      <div class="workflow-cta" style="margin-top: 50px;">
+        <a href="/workspace" class="btn-primary-cta">Enter Interactive Console &rarr;</a>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="landing-footer">
+      <div>ResearchGPT &middot; Scholarly Document Intelligence Platform</div>
+      <div class="footer-links">
+        <a href="/workspace">Workspace Console</a>
+        <span>&middot;</span>
+        <a href="#motive">Motive</a>
+        <span>&middot;</span>
+        <a href="#assurance">Governance</a>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

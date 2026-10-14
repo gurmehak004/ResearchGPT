@@ -1,43 +1,169 @@
-from langchain_community.vectorstores import FAISS #type:ignore
-from langchain_community.retrievers import BM25Retriever #type:ignore
-from langchain_huggingface import HuggingFaceEmbeddings #type:ignore
+import os
+import shutil
+import pickle
+from langchain_community.vectorstores import FAISS
+from langchain_community.retrievers import BM25Retriever
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_core.documents import Document
 
-# --- THE "FORCE" IMPORT ---
 try:
-    # 1. Try the core-retrievers path (Newest 2026 standard)
-    from langchain.retrievers.ensemble_retriever import EnsembleRetriever #type:ignore
+    from flashrank import Ranker, RerankRequest
+    _flashrank_available = True
 except ImportError:
-    try:
-        # 2. Try the general retrievers path
-        from langchain.retrievers import EnsembleRetriever #type:ignore
-    except ImportError:
-        try:
-            # 3. Try core
-            from langchain_core.retrievers import EnsembleRetriever  #type:ignore
-        except ImportError:
-            # 4. IF ALL ELSE FAILS: Define a dummy class so the code doesn't CRASH
-            # This allows the UI to open even if the library is broken.
-            print("⚠️ Warning: EnsembleRetriever not found. Falling back to single retriever.")
-            EnsembleRetriever = None
+    _flashrank_available = False
 
-def get_hybrid_retriever(chunks):
-    # 1. Setup Embeddings
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-    
-    # 2. Setup FAISS (Semantic)
-    vectorstore = FAISS.from_documents(chunks, embeddings)
-    faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-    
-    # 3. Setup BM25 (Keyword)
-    bm25_retriever = BM25Retriever.from_documents(chunks)
-    bm25_retriever.k = 3
-    
-    # 4. Hybrid Logic with Safety Switch
-    if EnsembleRetriever is not None:
-        return EnsembleRetriever(
-            retrievers=[faiss_retriever, bm25_retriever],
-            weights=[0.7, 0.3]
+_embeddings = None
+_ranker = None
+
+INDEX_STORAGE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "indices")
+os.makedirs(INDEX_STORAGE_DIR, exist_ok=True)
+
+
+def _get_embeddings():
+    """Lazy-load embeddings model once."""
+    global _embeddings
+    if _embeddings is None:
+        _embeddings = HuggingFaceEmbeddings(
+            model_name="all-MiniLM-L6-v2",
+            encode_kwargs={"batch_size": 128}
         )
-    
-    # If Ensemble failed to import, return FAISS so the app still WORKS
-    return faiss_retriever
+    return _embeddings
+
+
+def _get_ranker():
+    """Lazy-load ultra-lightweight CPU reranker."""
+    global _ranker
+    if _ranker is None and _flashrank_available:
+        try:
+            _ranker = Ranker(model_name="ms-marco-TinyBERT-L-2-v2", cache_dir=".cache/flashrank")
+        except Exception as e:
+            print(f"[WARN] Failed to load FlashRank: {e}")
+            _ranker = None
+    return _ranker
+
+
+class PersistentResearchRetriever:
+    """
+    Two-stage hybrid retriever supporting disk persistence and reloads.
+    """
+
+    def __init__(self, faiss_retriever, bm25_retriever, chunks: list[Document]):
+        self.faiss_retriever = faiss_retriever
+        self.bm25_retriever = bm25_retriever
+        self.chunks = chunks
+        self.abstract_chunks = [
+            doc for doc in chunks if doc.metadata.get("is_abstract_chunk", False)
+        ]
+
+    def invoke(self, query: str) -> list[Document]:
+        query_lower = query.lower()
+        is_overview_query = any(k in query_lower for k in [
+            "abstract", "summary", "summarize", "overview", "what is this paper about", "intro", "introduction"
+        ])
+
+        candidates = []
+        try:
+            dense_docs = self.faiss_retriever.invoke(query)
+            candidates.extend(dense_docs)
+        except Exception as e:
+            print(f"[WARN] FAISS retrieval failed: {e}")
+
+        try:
+            sparse_docs = self.bm25_retriever.invoke(query)
+            candidates.extend(sparse_docs)
+        except Exception as e:
+            print(f"[WARN] BM25 retrieval failed: {e}")
+
+        if is_overview_query and self.abstract_chunks:
+            candidates = self.abstract_chunks + candidates
+
+        seen = set()
+        unique_candidates = []
+        for doc in candidates:
+            sample = doc.page_content[:150]
+            if sample not in seen:
+                seen.add(sample)
+                unique_candidates.append(doc)
+
+        if not unique_candidates:
+            return []
+
+        ranker = _get_ranker()
+        if ranker and len(unique_candidates) > 1:
+            try:
+                passages = [
+                    {"id": idx, "text": doc.page_content, "meta": doc.metadata}
+                    for idx, doc in enumerate(unique_candidates)
+                ]
+                rerank_request = RerankRequest(query=query, passages=passages)
+                results = ranker.rerank(rerank_request)
+
+                top_results = results[:6]
+                return [
+                    Document(page_content=r["text"], metadata=r["meta"])
+                    for r in top_results
+                ]
+            except Exception as e:
+                print(f"[WARN] Rerank fallback: {e}")
+
+        return unique_candidates[:6]
+
+
+def build_and_save_retriever(chunks: list[Document], session_id: str):
+    """
+    Build FAISS + BM25 and persist both directly to disk under session_id.
+    """
+    if not chunks:
+        raise ValueError("Cannot build retriever from empty chunks list")
+
+    embeddings = _get_embeddings()
+    session_dir = os.path.join(INDEX_STORAGE_DIR, session_id)
+    os.makedirs(session_dir, exist_ok=True)
+
+    # 1. Build and save FAISS
+    vectorstore = FAISS.from_documents(chunks, embeddings)
+    vectorstore.save_local(session_dir)
+
+    # 2. Build and save BM25 & Chunks metadata
+    bm25 = BM25Retriever.from_documents(chunks)
+    bm25.k = 8
+    with open(os.path.join(session_dir, "bm25_chunks.pkl"), "wb") as f:
+        pickle.dump({"chunks": chunks, "bm25": bm25}, f)
+
+    faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": 12})
+    return PersistentResearchRetriever(faiss_retriever, bm25, chunks)
+
+
+def load_saved_retriever(session_id: str):
+    """
+    Load persisted FAISS + BM25 index from disk without re-parsing PDFs.
+    """
+    session_dir = os.path.join(INDEX_STORAGE_DIR, session_id)
+    faiss_index_file = os.path.join(session_dir, "index.faiss")
+    chunks_file = os.path.join(session_dir, "bm25_chunks.pkl")
+
+    if not (os.path.exists(faiss_index_file) and os.path.exists(chunks_file)):
+        return None
+
+    try:
+        embeddings = _get_embeddings()
+        vectorstore = FAISS.load_local(session_dir, embeddings, allow_dangerous_deserialization=True)
+        faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": 12})
+
+        with open(chunks_file, "rb") as f:
+            data = pickle.load(f)
+            chunks = data["chunks"]
+            bm25 = data["bm25"]
+
+        print(f"[INFO] Successfully loaded persistent index from disk for session {session_id}")
+        return PersistentResearchRetriever(faiss_retriever, bm25, chunks)
+    except Exception as e:
+        print(f"[WARN] Failed to load saved retriever: {e}")
+        return None
+
+
+def delete_saved_retriever(session_id: str):
+    """Delete index folder on session reset."""
+    session_dir = os.path.join(INDEX_STORAGE_DIR, session_id)
+    if os.path.exists(session_dir):
+        shutil.rmtree(session_dir, ignore_errors=True)

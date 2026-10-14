@@ -1,9 +1,14 @@
-streamlit
+flask
+groq
+python-dotenv
+gunicorn
 langchain
 langchain-community
 langchain-core
 langchain-huggingface
+langchain-text-splitters
 faiss-cpu
 rank_bm25
-ollama
 pypdf
+sentence-transformers
+chainlit

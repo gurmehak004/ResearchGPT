@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ResearchGPT — Document Intelligence System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <!-- Markdown parser -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Sidebar / Document Panel -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand">
+          <div class="brand-badge">SYS</div>
+          <div class="brand-text">
+            <h1>ResearchGPT</h1>
+            <span class="sub-label">Hybrid RAG Engine</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Upload Section -->
+      <div class="panel-section">
+        <div class="section-heading">Document Ingestion</div>
+        <div class="section-desc">Upload PDF files to initialize retrieval index.</div>
+        
+        <div class="upload-dropzone" id="dropzone">
+          <input type="file" id="file-input" multiple accept=".pdf" hidden>
+          <div class="dropzone-content">
+            <svg class="dropzone-svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            <p class="dropzone-primary">Click to select files</p>
+            <span class="dropzone-secondary">or drag and drop (PDF, up to 50MB)</span>
+          </div>
+        </div>
+
+        <div id="upload-status" class="status-box hidden"></div>
+      </div>
+
+      <!-- Loaded Papers & Stats -->
+      <div class="panel-section flex-grow">
+        <div class="panel-header-row">
+          <div class="section-heading">Active Corpus (<span id="doc-count">0</span>)</div>
+          <button id="reset-btn" class="btn-action-text" title="Clear documents">Clear Index</button>
+        </div>
+        <div id="file-list" class="file-list">
+          <div class="empty-state">No active documents. Ingest PDFs to enable queries.</div>
+        </div>
+
+        <div class="metrics-panel">
+          <div class="metric-block">
+            <span class="metric-label">Total Indexed Chunks</span>
+            <span class="metric-value" id="total-chunks-stat">0</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Chat Workspace -->
+    <main class="chat-workspace">
+      <header class="workspace-header">
+        <div class="header-titles">
+          <h2>Query Console</h2>
+          <span id="header-status" class="header-sub">System idle. Awaiting document ingestion.</span>
+        </div>
+        <div class="header-status-badge">
+          <span class="status-dot" id="system-status-indicator"></span>
+          <span class="status-label" id="system-status-text">Idle</span>
+        </div>
+      </header>
+
+      <!-- Message Stream -->
+      <div class="chat-messages" id="chat-messages">
+        <div class="message assistant intro-card">
+          <div class="message-tag">SYSTEM</div>
+          <div class="message-content">
+            <h3>ResearchGPT Query Console</h3>
+            <p>This environment is configured for grounded academic document synthesis and multi-paper comparative analysis:</p>
+            <ul>
+              <li><strong>Dual Retrieval Architecture:</strong> Dense FAISS vector embeddings paired with sparse BM25 keyword matching.</li>
+              <li><strong>Multi-Document Grounding:</strong> Cross-references and attributes conclusions to their explicit source papers.</li>
+              <li><strong>Hallucination Verification:</strong> Secondary factual consistency pass to suppress unsupported assertions.</li>
+            </ul>
+            <p>Upload target PDFs using the ingestion panel to activate the retrieval index.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Input Bar -->
+      <div class="chat-input-wrapper">
+        <form id="chat-form" class="chat-form">
+          <textarea 
+            id="chat-input" 
+            placeholder="Submit a research query or comparative analysis prompt..."
+            rows="1"
+            disabled
+          ></textarea>
+          <button type="submit" id="send-btn" class="btn-submit" disabled aria-label="Send Query">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </form>
+        <div class="input-annotation">Shift + Enter for multiline | Enter to execute query</div>
+      </div>
+    </main>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
