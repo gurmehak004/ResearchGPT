@@ -9,6 +9,7 @@ langchain-huggingface
 langchain-text-splitters
 faiss-cpu
 rank_bm25
-pypdf
+pymupdf
+flashrank
 sentence-transformers
-chainlit
+flask-limiter
