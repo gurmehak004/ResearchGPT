@@ -1,6 +1,7 @@
 import os
 import uuid
 import time
+import threading
 from collections import Counter
 from flask import Flask, render_template, request, jsonify, session
 from flask_limiter import Limiter
@@ -28,15 +29,18 @@ from engine.db import (
 load_dotenv()
 init_db()
 
-# Pre-warm: eagerly load embedding model + reranker at startup
-# This prevents cold-start timeouts on Render when the first PDF upload arrives.
-print("[STARTUP] Pre-warming embedding model and reranker...")
-try:
-    _get_embeddings()
-    _get_ranker()
-    print("[STARTUP] Models loaded successfully.")
-except Exception as _warm_err:
-    print(f"[STARTUP WARN] Model pre-warm failed: {_warm_err}")
+# Background thread pre-warm: loads models AFTER server is up so health checks pass
+def _background_prewarm():
+    try:
+        print("[PREWARM] Loading embedding model in background...")
+        _get_embeddings()
+        _get_ranker()
+        print("[PREWARM] Models ready.")
+    except Exception as e:
+        print(f"[PREWARM WARN] {e}")
+
+_prewarm_thread = threading.Thread(target=_background_prewarm, daemon=True)
+_prewarm_thread.start()
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "researchgpt_production_secret_2026")
