@@ -12,7 +12,9 @@ from engine.processor import process_pdf_files
 from engine.retrievers import (
     build_and_save_retriever,
     load_saved_retriever,
-    delete_saved_retriever
+    delete_saved_retriever,
+    _get_embeddings,
+    _get_ranker
 )
 from engine.llm_handler import get_llm_response, check_hallucination
 from engine.db import (
@@ -25,6 +27,16 @@ from engine.db import (
 
 load_dotenv()
 init_db()
+
+# Pre-warm: eagerly load embedding model + reranker at startup
+# This prevents cold-start timeouts on Render when the first PDF upload arrives.
+print("[STARTUP] Pre-warming embedding model and reranker...")
+try:
+    _get_embeddings()
+    _get_ranker()
+    print("[STARTUP] Models loaded successfully.")
+except Exception as _warm_err:
+    print(f"[STARTUP WARN] Model pre-warm failed: {_warm_err}")
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "researchgpt_production_secret_2026")

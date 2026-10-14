@@ -105,7 +105,7 @@ async function handleFileUpload(files) {
     return;
   }
 
-  showStatus(`Processing and indexing ${validPdfCount} PDF document(s)...`, "info");
+  showStatus(`Ingesting ${validPdfCount} PDF document(s) — this may take up to 60 seconds on first upload…`, "info");
   systemStatusIndicator.classList.remove("active");
   systemStatusText.textContent = "Indexing...";
 
@@ -114,7 +114,18 @@ async function handleFileUpload(files) {
       method: "POST",
       body: formData,
     });
-    const result = await res.json();
+
+    // Safely parse response — server may return HTML on gateway timeout
+    let result;
+    const contentType = res.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      result = await res.json();
+    } else {
+      // Non-JSON response (e.g. 502/504 HTML from proxy)
+      const text = await res.text();
+      console.error("Non-JSON response:", text.slice(0, 200));
+      throw new Error("The server took too long to respond. Please try again — subsequent uploads are faster once the system is warmed up.");
+    }
 
     if (!res.ok) {
       throw new Error(result.error || "Failed to process files");
@@ -179,7 +190,19 @@ chatForm.addEventListener("submit", async (e) => {
       body: JSON.stringify({ query }),
     });
 
-    const data = await res.json();
+    // Safely parse response — guard against HTML proxy error pages
+    let data;
+    const contentType = res.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      data = await res.json();
+    } else {
+      const text = await res.text();
+      console.error("Non-JSON chat response:", text.slice(0, 200));
+      removeLoadingMessage(loadingId);
+      appendMessage("assistant", "The server took too long to respond. Please try your query again.");
+      return;
+    }
+
     removeLoadingMessage(loadingId);
 
     if (!res.ok) {
