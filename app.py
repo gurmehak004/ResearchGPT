@@ -102,12 +102,22 @@ def _get_active_retriever(sess_id: str):
 
 def _process_upload_job(job_id: str, sess_id: str, saved_paths: list[str], file_names: list[str]):
     """Extract, index, and persist an upload outside the request cycle."""
+    job_started_at = time.monotonic()
+    print(f"[UPLOAD job={job_id} session={sess_id}] Started with {len(saved_paths)} file(s).", flush=True)
     update_upload_job(job_id, "processing")
     try:
+        extraction_started_at = time.monotonic()
+        print(f"[UPLOAD job={job_id} session={sess_id}] Starting PDF extraction.", flush=True)
         new_chunks = process_pdf_files(saved_paths)
+        print(
+            f"[UPLOAD job={job_id} session={sess_id}] PDF extraction completed in "
+            f"{time.monotonic() - extraction_started_at:.1f}s with {len(new_chunks)} chunk(s).",
+            flush=True,
+        )
         if not new_chunks:
             raise ValueError("Could not extract readable text from the uploaded PDFs")
 
+        print(f"[UPLOAD job={job_id} session={sess_id}] Loading existing session index.", flush=True)
         existing_meta = get_session_metadata(sess_id)
         existing_files = existing_meta.get("file_names", [])
         existing_retriever = _get_active_retriever(sess_id)
@@ -118,8 +128,14 @@ def _process_upload_job(job_id: str, sess_id: str, saved_paths: list[str], file_
         )
         all_files = list(dict.fromkeys(existing_files + file_names))
 
+        print(
+            f"[UPLOAD job={job_id} session={sess_id}] Starting index build for "
+            f"{len(all_chunks)} total chunk(s).",
+            flush=True,
+        )
         retriever = build_and_save_retriever(all_chunks, sess_id)
         _cache_retriever(sess_id, retriever)
+        print(f"[UPLOAD job={job_id} session={sess_id}] Saving session metadata.", flush=True)
         save_session_metadata(sess_id, all_files, len(all_chunks))
 
         paper_counts = dict(Counter([doc.metadata.get("source", "Unknown") for doc in all_chunks]))
@@ -133,8 +149,13 @@ def _process_upload_job(job_id: str, sess_id: str, saved_paths: list[str], file_
                 "paper_chunks": paper_counts,
             },
         )
+        print(
+            f"[UPLOAD job={job_id} session={sess_id}] Completed in "
+            f"{time.monotonic() - job_started_at:.1f}s.",
+            flush=True,
+        )
     except Exception as e:
-        print(f"[ERROR] Upload processing error: {e}")
+        print(f"[ERROR] [UPLOAD job={job_id} session={sess_id}] {type(e).__name__}: {e}", flush=True)
         update_upload_job(job_id, "failed", error=f"Failed to process PDFs: {e}")
     finally:
         _remove_saved_uploads(saved_paths)

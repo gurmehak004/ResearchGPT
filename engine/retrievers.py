@@ -2,6 +2,7 @@ import os
 import shutil
 import pickle
 import threading
+import time
 from langchain_community.vectorstores import FAISS
 from langchain_community.retrievers import BM25Retriever
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -130,19 +131,60 @@ def build_and_save_retriever(chunks: list[Document], session_id: str):
     if not chunks:
         raise ValueError("Cannot build retriever from empty chunks list")
 
+    stage_started_at = time.monotonic()
+    print(
+        f"[INDEX session={session_id}] Initializing embeddings for {len(chunks)} chunk(s).",
+        flush=True,
+    )
     embeddings = _get_embeddings()
+    print(
+        f"[INDEX session={session_id}] Embeddings initialized in "
+        f"{time.monotonic() - stage_started_at:.1f}s.",
+        flush=True,
+    )
     session_dir = os.path.join(INDEX_STORAGE_DIR, session_id)
     os.makedirs(session_dir, exist_ok=True)
 
-    # 1. Build and save FAISS
+    stage_started_at = time.monotonic()
+    print(
+        f"[INDEX session={session_id}] Starting FAISS embedding/index build for {len(chunks)} chunk(s).",
+        flush=True,
+    )
     vectorstore = FAISS.from_documents(chunks, embeddings)
-    vectorstore.save_local(session_dir)
+    print(
+        f"[INDEX session={session_id}] FAISS embedding/index build completed in "
+        f"{time.monotonic() - stage_started_at:.1f}s.",
+        flush=True,
+    )
 
-    # 2. Build and save BM25 & Chunks metadata
+    stage_started_at = time.monotonic()
+    print(f"[INDEX session={session_id}] Saving FAISS index.", flush=True)
+    vectorstore.save_local(session_dir)
+    print(
+        f"[INDEX session={session_id}] FAISS index saved in "
+        f"{time.monotonic() - stage_started_at:.1f}s.",
+        flush=True,
+    )
+
+    stage_started_at = time.monotonic()
+    print(f"[INDEX session={session_id}] Starting BM25 build.", flush=True)
     bm25 = BM25Retriever.from_documents(chunks)
     bm25.k = BM25_RETRIEVER_K
+    print(
+        f"[INDEX session={session_id}] BM25 build completed in "
+        f"{time.monotonic() - stage_started_at:.1f}s.",
+        flush=True,
+    )
+
+    stage_started_at = time.monotonic()
+    print(f"[INDEX session={session_id}] Saving BM25 data and chunks.", flush=True)
     with open(os.path.join(session_dir, "bm25_chunks.pkl"), "wb") as f:
         pickle.dump({"chunks": chunks, "bm25": bm25}, f)
+    print(
+        f"[INDEX session={session_id}] BM25 data saved in "
+        f"{time.monotonic() - stage_started_at:.1f}s.",
+        flush=True,
+    )
 
     faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": FAISS_RETRIEVER_K})
     return PersistentResearchRetriever(faiss_retriever, bm25, chunks)
