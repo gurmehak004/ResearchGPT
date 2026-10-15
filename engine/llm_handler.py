@@ -6,6 +6,7 @@ from groq import Groq
 load_dotenv()
 
 _groq_client = None
+MAX_COMPLETION_TOKENS = 900
 
 
 def _get_groq_client() -> Groq:
@@ -63,7 +64,7 @@ Confidence range: 0.0 to 1.0."""
             model="qwen/qwen3.8-27b",
             response_format={"type": "json_object"},
             temperature=0.2,
-            max_completion_tokens=1500,
+            max_completion_tokens=MAX_COMPLETION_TOKENS,
         )
 
         response_content = chat_completion.choices[0].message.content or "{}"
