@@ -12,8 +12,10 @@ Source-backed citations.
 
 ## Render production configuration
 
-Set `GROQ_API_KEY` and a unique, random `FLASK_SECRET_KEY` in the Render service
-environment. Set `DISABLE_RERANKER=true` to keep FlashRank disabled.
+Set `GROQ_API_KEY`, `GOOGLE_API_KEY`, and a unique, random `FLASK_SECRET_KEY`
+in the Render service environment. Set `DISABLE_RERANKER=true` to keep
+FlashRank disabled. Gemini embedding quotas and pricing depend on your Google
+AI Studio account and current plan.
 
 Render persistent disks require a paid service. To keep indexes and the SQLite
 database across deploys and restarts, attach a disk mounted at `/var/data` and
@@ -25,3 +27,8 @@ can be lost after restarts or deploys.
 PDF uploads are queued and processed asynchronously so indexing does not have
 to finish within a single HTTP request. An upload still in progress can be
 interrupted if the service restarts.
+
+For the 512 MB free instance, local PyTorch/Sentence Transformers embeddings
+have been replaced with Gemini hosted embeddings. BM25 remains enabled. Uploads
+are capped at 10 MB total, 100 pages per PDF, and 1000 chunks per session;
+FAISS vectors are generated in small batches.

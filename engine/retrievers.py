@@ -5,15 +5,10 @@ import threading
 import time
 from langchain_community.vectorstores import FAISS
 from langchain_community.retrievers import BM25Retriever
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_core.embeddings import Embeddings
 from langchain_core.documents import Document
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from engine.storage import DATA_DIR
-
-try:
-    from flashrank import Ranker, RerankRequest
-    _flashrank_available = True
-except ImportError:
-    _flashrank_available = False
 
 _embeddings = None
 _ranker = None
@@ -22,22 +17,43 @@ _ranker_lock = threading.Lock()
 
 FAISS_RETRIEVER_K = 8
 BM25_RETRIEVER_K = 5
+EMBEDDING_MODEL = "gemini-embedding-001"
+EMBEDDING_DIMENSION = 768
+EMBEDDING_BATCH_SIZE = 16
 
 INDEX_STORAGE_DIR = os.path.join(DATA_DIR, "indices")
 os.makedirs(INDEX_STORAGE_DIR, exist_ok=True)
 
 
+class GeminiRetrievalEmbeddings(Embeddings):
+    """Use Gemini's hosted retrieval embeddings instead of local PyTorch."""
+
+    def __init__(self):
+        self.client = GoogleGenerativeAIEmbeddings(model=EMBEDDING_MODEL)
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self.client.embed_documents(
+            texts,
+            batch_size=EMBEDDING_BATCH_SIZE,
+            task_type="RETRIEVAL_DOCUMENT",
+            output_dimensionality=EMBEDDING_DIMENSION,
+        )
+
+    def embed_query(self, text: str) -> list[float]:
+        return self.client.embed_query(
+            text,
+            task_type="RETRIEVAL_QUERY",
+            output_dimensionality=EMBEDDING_DIMENSION,
+        )
+
+
 def _get_embeddings():
-    """Lazy-load embeddings model once."""
+    """Lazily initialize the hosted embeddings client once."""
     global _embeddings
     if _embeddings is None:
         with _embeddings_lock:
             if _embeddings is None:
-                _embeddings = HuggingFaceEmbeddings(
-                    model_name="all-MiniLM-L6-v2",
-                    model_kwargs={"device": "cpu"},
-                    encode_kwargs={"batch_size": 128, "normalize_embeddings": False}
-                )
+                _embeddings = GeminiRetrievalEmbeddings()
     return _embeddings
 
 
@@ -46,11 +62,15 @@ def _get_ranker():
     global _ranker
     if os.getenv("DISABLE_RERANKER", "").strip().lower() in {"1", "true", "yes", "on"}:
         return None
-    if _ranker is None and _flashrank_available:
+    if _ranker is None:
         with _ranker_lock:
             if _ranker is None:
                 try:
+                    from flashrank import Ranker
+
                     _ranker = Ranker(model_name="ms-marco-TinyBERT-L-2-v2", cache_dir=".cache/flashrank")
+                except ImportError:
+                    return None
                 except Exception as e:
                     print(f"[WARN] Failed to load FlashRank: {e}")
                     _ranker = None
@@ -106,6 +126,8 @@ class PersistentResearchRetriever:
         ranker = _get_ranker()
         if ranker and len(unique_candidates) > 1:
             try:
+                from flashrank import RerankRequest
+
                 passages = [
                     {"id": idx, "text": doc.page_content, "meta": doc.metadata}
                     for idx, doc in enumerate(unique_candidates)
@@ -122,6 +144,33 @@ class PersistentResearchRetriever:
                 print(f"[WARN] Rerank fallback: {e}")
 
         return unique_candidates[:6]
+
+
+def _build_faiss_index(chunks: list[Document], embeddings, session_id: str):
+    stage_started_at = time.monotonic()
+    print(
+        f"[INDEX session={session_id}] Starting batched FAISS embedding/index build "
+        f"for {len(chunks)} chunk(s), batch size {EMBEDDING_BATCH_SIZE}.",
+        flush=True,
+    )
+    vectorstore = None
+    for start in range(0, len(chunks), EMBEDDING_BATCH_SIZE):
+        batch = chunks[start:start + EMBEDDING_BATCH_SIZE]
+        if vectorstore is None:
+            vectorstore = FAISS.from_documents(batch, embeddings)
+        else:
+            vectorstore.add_documents(batch)
+        del batch
+
+    if vectorstore is None:
+        raise ValueError("Cannot build an index without document chunks")
+
+    print(
+        f"[INDEX session={session_id}] FAISS embedding/index build completed in "
+        f"{time.monotonic() - stage_started_at:.1f}s.",
+        flush=True,
+    )
+    return vectorstore
 
 
 def build_and_save_retriever(chunks: list[Document], session_id: str):
@@ -145,17 +194,7 @@ def build_and_save_retriever(chunks: list[Document], session_id: str):
     session_dir = os.path.join(INDEX_STORAGE_DIR, session_id)
     os.makedirs(session_dir, exist_ok=True)
 
-    stage_started_at = time.monotonic()
-    print(
-        f"[INDEX session={session_id}] Starting FAISS embedding/index build for {len(chunks)} chunk(s).",
-        flush=True,
-    )
-    vectorstore = FAISS.from_documents(chunks, embeddings)
-    print(
-        f"[INDEX session={session_id}] FAISS embedding/index build completed in "
-        f"{time.monotonic() - stage_started_at:.1f}s.",
-        flush=True,
-    )
+    vectorstore = _build_faiss_index(chunks, embeddings, session_id)
 
     stage_started_at = time.monotonic()
     print(f"[INDEX session={session_id}] Saving FAISS index.", flush=True)
@@ -203,14 +242,23 @@ def load_saved_retriever(session_id: str):
 
     try:
         embeddings = _get_embeddings()
-        vectorstore = FAISS.load_local(session_dir, embeddings, allow_dangerous_deserialization=True)
-        faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": FAISS_RETRIEVER_K})
-
         with open(chunks_file, "rb") as f:
             data = pickle.load(f)
             chunks = data["chunks"]
             bm25 = data["bm25"]
             bm25.k = BM25_RETRIEVER_K
+
+        vectorstore = FAISS.load_local(session_dir, embeddings, allow_dangerous_deserialization=True)
+        if vectorstore.index.d != EMBEDDING_DIMENSION:
+            print(
+                f"[WARN] Rebuilding session {session_id} index from {vectorstore.index.d} "
+                f"to {EMBEDDING_DIMENSION} dimensions.",
+                flush=True,
+            )
+            vectorstore = _build_faiss_index(chunks, embeddings, session_id)
+            vectorstore.save_local(session_dir)
+
+        faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": FAISS_RETRIEVER_K})
 
         print(f"[INFO] Successfully loaded persistent index from disk for session {session_id}")
         return PersistentResearchRetriever(faiss_retriever, bm25, chunks)

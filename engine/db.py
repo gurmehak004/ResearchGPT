@@ -99,11 +99,19 @@ def get_upload_job(job_id: str, session_id: str) -> dict | None:
     """Return an upload job only to the session that created it."""
     with get_db() as conn:
         row = conn.execute(
-            "SELECT status, error, result FROM upload_jobs WHERE job_id = ? AND session_id = ?",
+            "SELECT status, error, result, updated_at FROM upload_jobs WHERE job_id = ? AND session_id = ?",
             (job_id, session_id),
         ).fetchone()
         if row is None:
             return None
+        if row["status"] in {"queued", "processing"} and time.time() - row["updated_at"] > 900:
+            error = "Upload processing did not finish; the worker may have restarted. Please retry."
+            conn.execute(
+                "UPDATE upload_jobs SET status = 'failed', error = ?, updated_at = ? WHERE job_id = ?",
+                (error, time.time(), job_id),
+            )
+            conn.commit()
+            return {"status": "failed", "error": error, "result": None}
         return {
             "status": row["status"],
             "error": row["error"],

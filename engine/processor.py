@@ -1,7 +1,10 @@
 import os
-import fitz  # PyMuPDF
+import pymupdf as fitz
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+MAX_PDF_PAGES = 100
+MAX_CHUNKS_PER_UPLOAD = 1000
 
 
 def _format_table_as_markdown(table_data: list[list[str]]) -> str:
@@ -53,6 +56,11 @@ def process_pdf_files(file_paths: list[str]) -> list[Document]:
         try:
             doc = fitz.open(path)
             total_pages = len(doc)
+            if total_pages > MAX_PDF_PAGES:
+                doc.close()
+                raise ValueError(
+                    f"{filename} has {total_pages} pages; the limit is {MAX_PDF_PAGES} pages per PDF"
+                )
             file_raw_docs = []
 
             for page_num in range(total_pages):
@@ -115,11 +123,17 @@ def process_pdf_files(file_paths: list[str]) -> list[Document]:
 
             # Split entire document into overlapping chunks
             sub_chunks = text_splitter.split_documents(file_raw_docs)
+            if len(all_chunks) + len(sub_chunks) + 1 > MAX_CHUNKS_PER_UPLOAD:
+                raise ValueError(
+                    f"Upload exceeds the {MAX_CHUNKS_PER_UPLOAD}-chunk limit"
+                )
             all_chunks.extend(sub_chunks)
 
             print(f"[OK] {filename}: Extracted {total_pages} pages into {len(sub_chunks) + 1} chunks with table detection.")
 
         except Exception as e:
             print(f"[ERROR] Error loading {filename} with PyMuPDF: {e}")
+            if isinstance(e, ValueError):
+                raise
 
     return all_chunks

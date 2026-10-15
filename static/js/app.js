@@ -138,6 +138,10 @@ async function waitForUpload(jobId) {
   while (true) {
     await new Promise(resolve => setTimeout(resolve, 2000));
     const res = await fetch(`/api/upload/${encodeURIComponent(jobId)}`);
+    const contentType = res.headers.get("content-type") || "";
+    if (!contentType.includes("application/json")) {
+      throw new Error(`Upload status unavailable (HTTP ${res.status}). The server may have restarted; check Render logs.`);
+    }
     const job = await res.json();
     if (!res.ok) {
       throw new Error(job.error || "Could not check upload progress");

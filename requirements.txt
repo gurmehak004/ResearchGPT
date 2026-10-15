@@ -5,11 +5,10 @@ gunicorn
 langchain
 langchain-community
 langchain-core
-langchain-huggingface
+langchain-google-genai>=4.0.0
 langchain-text-splitters
 faiss-cpu
 rank_bm25
 pymupdf
 flashrank
-sentence-transformers
 flask-limiter

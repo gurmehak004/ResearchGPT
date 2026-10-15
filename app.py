@@ -31,10 +31,13 @@ from engine.db import (
 load_dotenv()
 flask_secret_key = os.getenv("FLASK_SECRET_KEY")
 groq_api_key = os.getenv("GROQ_API_KEY")
+google_api_key = os.getenv("GOOGLE_API_KEY")
 if not flask_secret_key or flask_secret_key == "replace-with-a-random-secret":
     raise RuntimeError("FLASK_SECRET_KEY must be set to a unique, random value.")
 if not groq_api_key or groq_api_key == "your_groq_api_key_here":
     raise RuntimeError("GROQ_API_KEY must be set before starting the application.")
+if not google_api_key or google_api_key == "your_google_api_key_here":
+    raise RuntimeError("GOOGLE_API_KEY must be set for Gemini document embeddings.")
 
 init_db()
 
@@ -52,11 +55,11 @@ limiter = Limiter(
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50MB max upload size
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10MB max total upload size
 _UPLOAD_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pdf-upload")
 
 # In-memory retriever cache to avoid repeated disk reads during active sessions
-_MAX_ACTIVE_RETRIEVERS = 3
+_MAX_ACTIVE_RETRIEVERS = 1
 _ACTIVE_RETRIEVERS = OrderedDict()
 _RETRIEVER_CACHE_LOCK = threading.Lock()
 
@@ -126,6 +129,8 @@ def _process_upload_job(job_id: str, sess_id: str, saved_paths: list[str], file_
             if existing_retriever
             else new_chunks
         )
+        if len(all_chunks) > 1000:
+            raise ValueError("Session exceeds the 1000-chunk limit; clear documents before uploading more.")
         all_files = list(dict.fromkeys(existing_files + file_names))
 
         print(
