@@ -1,10 +1,12 @@
 import os
 import shutil
 import pickle
+import threading
 from langchain_community.vectorstores import FAISS
 from langchain_community.retrievers import BM25Retriever
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
+from engine.storage import DATA_DIR
 
 try:
     from flashrank import Ranker, RerankRequest
@@ -14,8 +16,13 @@ except ImportError:
 
 _embeddings = None
 _ranker = None
+_embeddings_lock = threading.Lock()
+_ranker_lock = threading.Lock()
 
-INDEX_STORAGE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "indices")
+FAISS_RETRIEVER_K = 8
+BM25_RETRIEVER_K = 5
+
+INDEX_STORAGE_DIR = os.path.join(DATA_DIR, "indices")
 os.makedirs(INDEX_STORAGE_DIR, exist_ok=True)
 
 
@@ -23,22 +30,29 @@ def _get_embeddings():
     """Lazy-load embeddings model once."""
     global _embeddings
     if _embeddings is None:
-        _embeddings = HuggingFaceEmbeddings(
-            model_name="all-MiniLM-L6-v2",
-            encode_kwargs={"batch_size": 128}
-        )
+        with _embeddings_lock:
+            if _embeddings is None:
+                _embeddings = HuggingFaceEmbeddings(
+                    model_name="all-MiniLM-L6-v2",
+                    model_kwargs={"device": "cpu"},
+                    encode_kwargs={"batch_size": 128, "normalize_embeddings": False}
+                )
     return _embeddings
 
 
 def _get_ranker():
     """Lazy-load ultra-lightweight CPU reranker."""
     global _ranker
+    if os.getenv("DISABLE_RERANKER", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return None
     if _ranker is None and _flashrank_available:
-        try:
-            _ranker = Ranker(model_name="ms-marco-TinyBERT-L-2-v2", cache_dir=".cache/flashrank")
-        except Exception as e:
-            print(f"[WARN] Failed to load FlashRank: {e}")
-            _ranker = None
+        with _ranker_lock:
+            if _ranker is None:
+                try:
+                    _ranker = Ranker(model_name="ms-marco-TinyBERT-L-2-v2", cache_dir=".cache/flashrank")
+                except Exception as e:
+                    print(f"[WARN] Failed to load FlashRank: {e}")
+                    _ranker = None
     return _ranker
 
 
@@ -126,11 +140,11 @@ def build_and_save_retriever(chunks: list[Document], session_id: str):
 
     # 2. Build and save BM25 & Chunks metadata
     bm25 = BM25Retriever.from_documents(chunks)
-    bm25.k = 8
+    bm25.k = BM25_RETRIEVER_K
     with open(os.path.join(session_dir, "bm25_chunks.pkl"), "wb") as f:
         pickle.dump({"chunks": chunks, "bm25": bm25}, f)
 
-    faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": 12})
+    faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": FAISS_RETRIEVER_K})
     return PersistentResearchRetriever(faiss_retriever, bm25, chunks)
 
 
@@ -148,12 +162,13 @@ def load_saved_retriever(session_id: str):
     try:
         embeddings = _get_embeddings()
         vectorstore = FAISS.load_local(session_dir, embeddings, allow_dangerous_deserialization=True)
-        faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": 12})
+        faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": FAISS_RETRIEVER_K})
 
         with open(chunks_file, "rb") as f:
             data = pickle.load(f)
             chunks = data["chunks"]
             bm25 = data["bm25"]
+            bm25.k = BM25_RETRIEVER_K
 
         print(f"[INFO] Successfully loaded persistent index from disk for session {session_id}")
         return PersistentResearchRetriever(faiss_retriever, bm25, chunks)

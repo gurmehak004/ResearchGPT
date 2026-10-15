@@ -2,7 +2,7 @@ import os
 import uuid
 import time
 import threading
-from collections import Counter
+from collections import Counter, OrderedDict
 from flask import Flask, render_template, request, jsonify, session
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -14,8 +14,6 @@ from engine.retrievers import (
     build_and_save_retriever,
     load_saved_retriever,
     delete_saved_retriever,
-    _get_embeddings,
-    _get_ranker
 )
 from engine.llm_handler import get_llm_response, check_hallucination
 from engine.db import (
@@ -27,23 +25,17 @@ from engine.db import (
 )
 
 load_dotenv()
+flask_secret_key = os.getenv("FLASK_SECRET_KEY")
+groq_api_key = os.getenv("GROQ_API_KEY")
+if not flask_secret_key or flask_secret_key == "replace-with-a-random-secret":
+    raise RuntimeError("FLASK_SECRET_KEY must be set to a unique, random value.")
+if not groq_api_key or groq_api_key == "your_groq_api_key_here":
+    raise RuntimeError("GROQ_API_KEY must be set before starting the application.")
+
 init_db()
 
-# Background thread pre-warm: loads models AFTER server is up so health checks pass
-def _background_prewarm():
-    try:
-        print("[PREWARM] Loading embedding model in background...")
-        _get_embeddings()
-        _get_ranker()
-        print("[PREWARM] Models ready.")
-    except Exception as e:
-        print(f"[PREWARM WARN] {e}")
-
-_prewarm_thread = threading.Thread(target=_background_prewarm, daemon=True)
-_prewarm_thread.start()
-
 app = Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "researchgpt_production_secret_2026")
+app.secret_key = flask_secret_key
 
 # Rate Limiter Configuration (Protects Groq API & server resources)
 limiter = Limiter(
@@ -59,7 +51,18 @@ app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50MB max upload size
 
 # In-memory retriever cache to avoid repeated disk reads during active sessions
-_ACTIVE_RETRIEVERS = {}
+_MAX_ACTIVE_RETRIEVERS = 3
+_ACTIVE_RETRIEVERS = OrderedDict()
+_RETRIEVER_CACHE_LOCK = threading.Lock()
+
+
+def _cache_retriever(sess_id: str, retriever):
+    """Insert a retriever and evict the least recently used entry if needed."""
+    with _RETRIEVER_CACHE_LOCK:
+        _ACTIVE_RETRIEVERS[sess_id] = retriever
+        _ACTIVE_RETRIEVERS.move_to_end(sess_id)
+        while len(_ACTIVE_RETRIEVERS) > _MAX_ACTIVE_RETRIEVERS:
+            _ACTIVE_RETRIEVERS.popitem(last=False)
 
 
 def _get_or_create_session_id():
@@ -71,12 +74,22 @@ def _get_or_create_session_id():
 
 def _get_active_retriever(sess_id: str):
     """Get retriever from memory cache or load from disk persistence."""
-    if sess_id in _ACTIVE_RETRIEVERS:
-        return _ACTIVE_RETRIEVERS[sess_id]
+    with _RETRIEVER_CACHE_LOCK:
+        if sess_id in _ACTIVE_RETRIEVERS:
+            _ACTIVE_RETRIEVERS.move_to_end(sess_id)
+            return _ACTIVE_RETRIEVERS[sess_id]
     
     saved_retriever = load_saved_retriever(sess_id)
     if saved_retriever:
-        _ACTIVE_RETRIEVERS[sess_id] = saved_retriever
+        with _RETRIEVER_CACHE_LOCK:
+            cached_retriever = _ACTIVE_RETRIEVERS.get(sess_id)
+            if cached_retriever is not None:
+                _ACTIVE_RETRIEVERS.move_to_end(sess_id)
+                return cached_retriever
+            _ACTIVE_RETRIEVERS[sess_id] = saved_retriever
+            _ACTIVE_RETRIEVERS.move_to_end(sess_id)
+            while len(_ACTIVE_RETRIEVERS) > _MAX_ACTIVE_RETRIEVERS:
+                _ACTIVE_RETRIEVERS.popitem(last=False)
         return saved_retriever
     
     return None
@@ -144,7 +157,7 @@ def upload_files():
 
         # Build & persist index to disk
         retriever = build_and_save_retriever(all_chunks, sess_id)
-        _ACTIVE_RETRIEVERS[sess_id] = retriever
+        _cache_retriever(sess_id, retriever)
 
         # Save session metadata to persistent SQLite
         save_session_metadata(sess_id, all_files, len(all_chunks))
@@ -266,8 +279,8 @@ def status():
 def reset():
     """Clear session data from memory, disk, and database."""
     sess_id = _get_or_create_session_id()
-    if sess_id in _ACTIVE_RETRIEVERS:
-        del _ACTIVE_RETRIEVERS[sess_id]
+    with _RETRIEVER_CACHE_LOCK:
+        _ACTIVE_RETRIEVERS.pop(sess_id, None)
 
     delete_saved_retriever(sess_id)
     clear_session_data(sess_id)

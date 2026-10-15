@@ -2,8 +2,9 @@ import os
 import sqlite3
 import json
 import time
+from engine.storage import DATA_DIR
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "researchgpt.db")
+DB_PATH = os.path.join(DATA_DIR, "researchgpt.db")
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 
