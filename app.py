@@ -2,6 +2,7 @@ import os
 import uuid
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from collections import Counter, OrderedDict
 from flask import Flask, render_template, request, jsonify, session
 from flask_limiter import Limiter
@@ -18,6 +19,9 @@ from engine.retrievers import (
 from engine.llm_handler import get_llm_response, check_hallucination
 from engine.db import (
     init_db,
+    create_upload_job,
+    update_upload_job,
+    get_upload_job,
     save_session_metadata,
     get_session_metadata,
     record_query,
@@ -49,6 +53,7 @@ UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".uploa
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50MB max upload size
+_UPLOAD_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pdf-upload")
 
 # In-memory retriever cache to avoid repeated disk reads during active sessions
 _MAX_ACTIVE_RETRIEVERS = 3
@@ -95,6 +100,56 @@ def _get_active_retriever(sess_id: str):
     return None
 
 
+def _process_upload_job(job_id: str, sess_id: str, saved_paths: list[str], file_names: list[str]):
+    """Extract, index, and persist an upload outside the request cycle."""
+    update_upload_job(job_id, "processing")
+    try:
+        new_chunks = process_pdf_files(saved_paths)
+        if not new_chunks:
+            raise ValueError("Could not extract readable text from the uploaded PDFs")
+
+        existing_meta = get_session_metadata(sess_id)
+        existing_files = existing_meta.get("file_names", [])
+        existing_retriever = _get_active_retriever(sess_id)
+        all_chunks = (
+            existing_retriever.chunks + new_chunks
+            if existing_retriever
+            else new_chunks
+        )
+        all_files = list(dict.fromkeys(existing_files + file_names))
+
+        retriever = build_and_save_retriever(all_chunks, sess_id)
+        _cache_retriever(sess_id, retriever)
+        save_session_metadata(sess_id, all_files, len(all_chunks))
+
+        paper_counts = dict(Counter([doc.metadata.get("source", "Unknown") for doc in all_chunks]))
+        update_upload_job(
+            job_id,
+            "completed",
+            result={
+                "message": f"Successfully indexed {len(new_chunks)} chunks from {len(file_names)} file(s).",
+                "files": all_files,
+                "total_chunks": len(all_chunks),
+                "paper_chunks": paper_counts,
+            },
+        )
+    except Exception as e:
+        print(f"[ERROR] Upload processing error: {e}")
+        update_upload_job(job_id, "failed", error=f"Failed to process PDFs: {e}")
+    finally:
+        _remove_saved_uploads(saved_paths)
+
+
+def _remove_saved_uploads(saved_paths: list[str]):
+    for path in saved_paths:
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            print(f"[WARN] Could not remove temporary upload {path}: {e}")
+
+
 @app.route("/")
 def landing():
     """Render landing page."""
@@ -111,7 +166,7 @@ def workspace():
 @app.route("/api/upload", methods=["POST"])
 @limiter.limit("15 per hour")  # Abuse prevention: max 15 uploads per hour per user
 def upload_files():
-    """Handle PDF uploads, table extraction, and persistent disk indexing."""
+    """Accept PDF uploads and queue indexing outside the request cycle."""
     sess_id = _get_or_create_session_id()
 
     if "files" not in request.files:
@@ -128,7 +183,7 @@ def upload_files():
         if file and file.filename.lower().endswith(".pdf"):
             filename = secure_filename(file.filename)
             file_names.append(filename)
-            unique_name = f"{sess_id}_{int(time.time())}_{filename}"
+            unique_name = f"{sess_id}_{uuid.uuid4().hex}_{filename}"
             save_path = os.path.join(app.config["UPLOAD_FOLDER"], unique_name)
             file.save(save_path)
             saved_paths.append(save_path)
@@ -136,52 +191,26 @@ def upload_files():
     if not saved_paths:
         return jsonify({"error": "No valid PDF files were uploaded"}), 400
 
+    job_id = uuid.uuid4().hex
     try:
-        # Extract text, structure tables, and capture abstracts
-        new_chunks = process_pdf_files(saved_paths)
-        if not new_chunks:
-            return jsonify({"error": "Could not extract readable text from the uploaded PDFs"}), 400
-
-        # Check existing metadata
-        existing_meta = get_session_metadata(sess_id)
-        existing_files = existing_meta.get("file_names", [])
-
-        # Check if existing chunks can be merged
-        existing_retriever = _get_active_retriever(sess_id)
-        if existing_retriever:
-            all_chunks = existing_retriever.chunks + new_chunks
-        else:
-            all_chunks = new_chunks
-
-        all_files = list(dict.fromkeys(existing_files + file_names))
-
-        # Build & persist index to disk
-        retriever = build_and_save_retriever(all_chunks, sess_id)
-        _cache_retriever(sess_id, retriever)
-
-        # Save session metadata to persistent SQLite
-        save_session_metadata(sess_id, all_files, len(all_chunks))
-
-        # Remove temp uploads
-        for path in saved_paths:
-            try:
-                os.remove(path)
-            except Exception:
-                pass
-
-        paper_counts = dict(Counter([doc.metadata.get("source", "Unknown") for doc in all_chunks]))
-
-        return jsonify({
-            "success": True,
-            "message": f"Successfully indexed {len(new_chunks)} chunks from {len(file_names)} file(s).",
-            "files": all_files,
-            "total_chunks": len(all_chunks),
-            "paper_chunks": paper_counts
-        })
-
+        create_upload_job(job_id, sess_id)
+        _UPLOAD_EXECUTOR.submit(_process_upload_job, job_id, sess_id, saved_paths, file_names)
     except Exception as e:
-        print(f"[ERROR] Upload processing error: {e}")
-        return jsonify({"error": f"Failed to process PDFs: {str(e)}"}), 500
+        update_upload_job(job_id, "failed", error=f"Could not queue upload: {e}")
+        _remove_saved_uploads(saved_paths)
+        raise
+
+    return jsonify({"job_id": job_id, "status": "queued"}), 202
+
+
+@app.route("/api/upload/<job_id>", methods=["GET"])
+def upload_status(job_id: str):
+    """Return the state of an upload owned by the current session."""
+    sess_id = _get_or_create_session_id()
+    job = get_upload_job(job_id, sess_id)
+    if job is None:
+        return jsonify({"error": "Upload job not found"}), 404
+    return jsonify(job)
 
 
 @app.route("/api/chat", methods=["POST"])

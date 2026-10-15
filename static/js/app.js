@@ -105,7 +105,7 @@ async function handleFileUpload(files) {
     return;
   }
 
-  showStatus(`Ingesting ${validPdfCount} PDF document(s) — this may take up to 60 seconds on first upload…`, "info");
+  showStatus(`Uploading ${validPdfCount} PDF document(s)…`, "info");
   systemStatusIndicator.classList.remove("active");
   systemStatusText.textContent = "Indexing...";
 
@@ -115,27 +115,35 @@ async function handleFileUpload(files) {
       body: formData,
     });
 
-    // Safely parse response — server may return HTML on gateway timeout
-    let result;
     const contentType = res.headers.get("content-type") || "";
-    if (contentType.includes("application/json")) {
-      result = await res.json();
-    } else {
-      // Non-JSON response (e.g. 502/504 HTML from proxy)
-      const text = await res.text();
-      console.error("Non-JSON response:", text.slice(0, 200));
-      throw new Error("The server took too long to respond. Please try again — subsequent uploads are faster once the system is warmed up.");
+    if (!contentType.includes("application/json")) {
+      throw new Error(`Upload was not accepted (HTTP ${res.status}). Try a smaller PDF and check the Render logs.`);
     }
-
+    const result = await res.json();
     if (!res.ok) {
       throw new Error(result.error || "Failed to process files");
     }
 
-    showStatus(result.message, "success");
-    fetchStatus();
+    showStatus("Upload received. Extracting text and building the index…", "info");
+    const completed = await waitForUpload(result.job_id);
+    showStatus(completed.message, "success");
+    await fetchStatus();
   } catch (err) {
     showStatus(`Processing error: ${err.message}`, "error");
     systemStatusText.textContent = "Error";
+  }
+}
+
+async function waitForUpload(jobId) {
+  while (true) {
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    const res = await fetch(`/api/upload/${encodeURIComponent(jobId)}`);
+    const job = await res.json();
+    if (!res.ok) {
+      throw new Error(job.error || "Could not check upload progress");
+    }
+    if (job.status === "completed") return job.result;
+    if (job.status === "failed") throw new Error(job.error || "PDF processing failed");
   }
 }
 

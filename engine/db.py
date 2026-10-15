@@ -2,17 +2,23 @@ import os
 import sqlite3
 import json
 import time
+from contextlib import contextmanager
 from engine.storage import DATA_DIR
 
 DB_PATH = os.path.join(DATA_DIR, "researchgpt.db")
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 
+@contextmanager
 def get_db():
     """Connect to SQLite database."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def init_db():
@@ -45,7 +51,64 @@ def init_db():
                 FOREIGN KEY (session_id) REFERENCES sessions (session_id)
             )
         """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS upload_jobs (
+                job_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                error TEXT,
+                result TEXT,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            )
+        """)
         conn.commit()
+
+
+def create_upload_job(job_id: str, session_id: str):
+    """Record a queued upload so its status can be polled across workers."""
+    now = time.time()
+    with get_db() as conn:
+        conn.execute("DELETE FROM upload_jobs WHERE created_at < ?", (now - 172800,))
+        conn.execute(
+            """
+            INSERT INTO upload_jobs (job_id, session_id, status, created_at, updated_at)
+            VALUES (?, ?, 'queued', ?, ?)
+            """,
+            (job_id, session_id, now, now),
+        )
+        conn.commit()
+
+
+def update_upload_job(job_id: str, status: str, error: str | None = None, result: dict | None = None):
+    """Update the state and optional response payload for an upload job."""
+    with get_db() as conn:
+        conn.execute(
+            """
+            UPDATE upload_jobs
+            SET status = ?, error = ?, result = ?, updated_at = ?
+            WHERE job_id = ?
+            """,
+            (status, error, json.dumps(result) if result is not None else None, time.time(), job_id),
+        )
+        conn.commit()
+
+
+def get_upload_job(job_id: str, session_id: str) -> dict | None:
+    """Return an upload job only to the session that created it."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT status, error, result FROM upload_jobs WHERE job_id = ? AND session_id = ?",
+            (job_id, session_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "status": row["status"],
+            "error": row["error"],
+            "result": json.loads(row["result"]) if row["result"] else None,
+        }
 
 
 def save_session_metadata(session_id: str, file_names: list[str], total_chunks: int):
