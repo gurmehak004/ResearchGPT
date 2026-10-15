@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import pickle
 import threading
@@ -20,6 +21,7 @@ BM25_RETRIEVER_K = 5
 EMBEDDING_MODEL = "gemini-embedding-001"
 EMBEDDING_DIMENSION = 768
 EMBEDDING_BATCH_SIZE = 16
+EMBEDDING_MAX_RETRIES = 2
 
 INDEX_STORAGE_DIR = os.path.join(DATA_DIR, "indices")
 os.makedirs(INDEX_STORAGE_DIR, exist_ok=True)
@@ -31,20 +33,37 @@ class GeminiRetrievalEmbeddings(Embeddings):
     def __init__(self):
         self.client = GoogleGenerativeAIEmbeddings(model=EMBEDDING_MODEL)
 
+    def _embed_with_retry(self, texts: list[str], task_type: str) -> list[list[float]]:
+        for attempt in range(EMBEDDING_MAX_RETRIES + 1):
+            try:
+                return self.client.embed_documents(
+                    texts,
+                    batch_size=EMBEDDING_BATCH_SIZE,
+                    task_type=task_type,
+                    output_dimensionality=EMBEDDING_DIMENSION,
+                )
+            except Exception as e:
+                message = str(e)
+                is_rate_limited = "429" in message or "RESOURCE_EXHAUSTED" in message
+                if not is_rate_limited or attempt == EMBEDDING_MAX_RETRIES:
+                    raise
+
+                retry_match = re.search(r"retry in ([0-9.]+)s", message, re.IGNORECASE)
+                delay = float(retry_match.group(1)) if retry_match else 5.0 * (2 ** attempt)
+                delay = min(max(delay, 1.0), 90.0)
+                print(
+                    f"[EMBEDDINGS] Gemini rate limit reached; retrying in {delay:.1f}s "
+                    f"(attempt {attempt + 1}/{EMBEDDING_MAX_RETRIES}).",
+                    flush=True,
+                )
+                time.sleep(delay)
+        raise RuntimeError("Gemini embedding retries were exhausted")
+
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return self.client.embed_documents(
-            texts,
-            batch_size=EMBEDDING_BATCH_SIZE,
-            task_type="RETRIEVAL_DOCUMENT",
-            output_dimensionality=EMBEDDING_DIMENSION,
-        )
+        return self._embed_with_retry(texts, "RETRIEVAL_DOCUMENT")
 
     def embed_query(self, text: str) -> list[float]:
-        return self.client.embed_query(
-            text,
-            task_type="RETRIEVAL_QUERY",
-            output_dimensionality=EMBEDDING_DIMENSION,
-        )
+        return self._embed_with_retry([text], "RETRIEVAL_QUERY")[0]
 
 
 def _get_embeddings():
@@ -146,43 +165,85 @@ class PersistentResearchRetriever:
         return unique_candidates[:6]
 
 
-def _build_faiss_index(chunks: list[Document], embeddings, session_id: str):
+def _build_faiss_index(
+    chunks: list[Document],
+    embeddings,
+    session_id: str,
+    existing_vectorstore=None,
+):
     stage_started_at = time.monotonic()
-    print(
-        f"[INDEX session={session_id}] Starting batched FAISS embedding/index build "
-        f"for {len(chunks)} chunk(s), batch size {EMBEDDING_BATCH_SIZE}.",
-        flush=True,
-    )
-    vectorstore = None
-    for start in range(0, len(chunks), EMBEDDING_BATCH_SIZE):
-        batch = chunks[start:start + EMBEDDING_BATCH_SIZE]
-        if vectorstore is None:
-            vectorstore = FAISS.from_documents(batch, embeddings)
-        else:
+    if existing_vectorstore is not None:
+        print(
+            f"[INDEX session={session_id}] Adding {len(chunks)} new chunk(s) "
+            f"to the existing FAISS index.",
+            flush=True,
+        )
+        vectorstore = existing_vectorstore
+        for start in range(0, len(chunks), EMBEDDING_BATCH_SIZE):
+            batch = chunks[start:start + EMBEDDING_BATCH_SIZE]
             vectorstore.add_documents(batch)
-        del batch
+            del batch
+    else:
+        print(
+            f"[INDEX session={session_id}] Starting batched FAISS embedding/index build "
+            f"for {len(chunks)} chunk(s), batch size {EMBEDDING_BATCH_SIZE}.",
+            flush=True,
+        )
+        vectorstore = None
+        for start in range(0, len(chunks), EMBEDDING_BATCH_SIZE):
+            batch = chunks[start:start + EMBEDDING_BATCH_SIZE]
+            if vectorstore is None:
+                vectorstore = FAISS.from_documents(batch, embeddings)
+            else:
+                vectorstore.add_documents(batch)
+            del batch
 
     if vectorstore is None:
         raise ValueError("Cannot build an index without document chunks")
 
     print(
-        f"[INDEX session={session_id}] FAISS embedding/index build completed in "
+        f"[INDEX session={session_id}] FAISS update completed in "
         f"{time.monotonic() - stage_started_at:.1f}s.",
         flush=True,
     )
     return vectorstore
 
 
-def build_and_save_retriever(chunks: list[Document], session_id: str):
+def _load_existing_faiss(session_dir: str, embeddings, session_id: str):
+    index_path = os.path.join(session_dir, "index.faiss")
+    if not os.path.exists(index_path):
+        return None
+
+    vectorstore = FAISS.load_local(
+        session_dir,
+        embeddings,
+        allow_dangerous_deserialization=True,
+    )
+    if vectorstore.index.d != EMBEDDING_DIMENSION:
+        print(
+            f"[WARN] [INDEX session={session_id}] Existing index has "
+            f"{vectorstore.index.d} dimensions; rebuilding with {EMBEDDING_DIMENSION}.",
+            flush=True,
+        )
+        return None
+    return vectorstore
+
+
+def build_and_save_retriever(
+    chunks: list[Document],
+    session_id: str,
+    new_chunks: list[Document] | None = None,
+):
     """
-    Build FAISS + BM25 and persist both directly to disk under session_id.
+    Build/update FAISS and BM25, embedding only newly uploaded chunks when possible.
     """
     if not chunks:
         raise ValueError("Cannot build retriever from empty chunks list")
 
     stage_started_at = time.monotonic()
     print(
-        f"[INDEX session={session_id}] Initializing embeddings for {len(chunks)} chunk(s).",
+        f"[INDEX session={session_id}] Initializing embeddings for "
+        f"{len(new_chunks or chunks)} new chunk(s).",
         flush=True,
     )
     embeddings = _get_embeddings()
@@ -194,7 +255,21 @@ def build_and_save_retriever(chunks: list[Document], session_id: str):
     session_dir = os.path.join(INDEX_STORAGE_DIR, session_id)
     os.makedirs(session_dir, exist_ok=True)
 
-    vectorstore = _build_faiss_index(chunks, embeddings, session_id)
+    has_existing_index = os.path.exists(os.path.join(session_dir, "index.faiss"))
+    vectorstore = _load_existing_faiss(session_dir, embeddings, session_id)
+    if vectorstore is not None:
+        if new_chunks is None:
+            raise ValueError("New chunks are required to update an existing FAISS index")
+        additions = new_chunks
+    else:
+        additions = chunks
+        if has_existing_index:
+            print(
+                f"[INDEX session={session_id}] Rebuilding the full FAISS index because "
+                "the saved index is incompatible.",
+                flush=True,
+            )
+    vectorstore = _build_faiss_index(additions, embeddings, session_id, vectorstore)
 
     stage_started_at = time.monotonic()
     print(f"[INDEX session={session_id}] Saving FAISS index.", flush=True)
@@ -248,13 +323,8 @@ def load_saved_retriever(session_id: str):
             bm25 = data["bm25"]
             bm25.k = BM25_RETRIEVER_K
 
-        vectorstore = FAISS.load_local(session_dir, embeddings, allow_dangerous_deserialization=True)
-        if vectorstore.index.d != EMBEDDING_DIMENSION:
-            print(
-                f"[WARN] Rebuilding session {session_id} index from {vectorstore.index.d} "
-                f"to {EMBEDDING_DIMENSION} dimensions.",
-                flush=True,
-            )
+        vectorstore = _load_existing_faiss(session_dir, embeddings, session_id)
+        if vectorstore is None:
             vectorstore = _build_faiss_index(chunks, embeddings, session_id)
             vectorstore.save_local(session_dir)
 

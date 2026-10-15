@@ -138,7 +138,7 @@ def _process_upload_job(job_id: str, sess_id: str, saved_paths: list[str], file_
             f"{len(all_chunks)} total chunk(s).",
             flush=True,
         )
-        retriever = build_and_save_retriever(all_chunks, sess_id)
+        retriever = build_and_save_retriever(all_chunks, sess_id, new_chunks=new_chunks)
         _cache_retriever(sess_id, retriever)
         print(f"[UPLOAD job={job_id} session={sess_id}] Saving session metadata.", flush=True)
         save_session_metadata(sess_id, all_files, len(all_chunks))

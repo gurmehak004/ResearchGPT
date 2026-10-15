@@ -31,4 +31,6 @@ interrupted if the service restarts.
 For the 512 MB free instance, local PyTorch/Sentence Transformers embeddings
 have been replaced with Gemini hosted embeddings. BM25 remains enabled. Uploads
 are capped at 10 MB total, 100 pages per PDF, and 1000 chunks per session;
-FAISS vectors are generated in small batches.
+FAISS vectors are generated in small batches. Adding another PDF embeds only
+its new chunks into FAISS, while BM25 is rebuilt for the full session. Gemini
+429 rate-limit responses are retried using the server-provided delay.
