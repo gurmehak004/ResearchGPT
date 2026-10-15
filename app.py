@@ -230,6 +230,7 @@ def upload_files():
 
 
 @app.route("/api/upload/<job_id>", methods=["GET"])
+@limiter.exempt
 def upload_status(job_id: str):
     """Return the state of an upload owned by the current session."""
     sess_id = _get_or_create_session_id()
